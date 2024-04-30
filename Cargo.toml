@@ -8,3 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 cosmwasm-std = { version = "2.0.2", features = ["staking"] }
+serde = { version = "1.0.199", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+cw-multi-test = "2.0.1"
