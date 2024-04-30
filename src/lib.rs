@@ -1,14 +1,33 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use cosmwasm_std::{entry_point, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use error::ContractError;
+use msg::{ExecuteMsg, InstantiateMsg};
+
+mod contract;
+mod error;
+mod msg;
+mod state;
+
+#[entry_point]
+pub fn instantiate(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: InstantiateMsg,
+) -> StdResult<Response> {
+    contract::instantiate(deps, env, info, msg)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[entry_point]
+pub fn query(deps: Deps, env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
+    contract::query(deps, env, msg)
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[entry_point]
+pub fn execute(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    msg: ExecuteMsg,
+) -> Result<Response, ContractError> {
+    contract::execute(deps, _env, info, msg)
 }
