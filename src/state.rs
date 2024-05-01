@@ -5,3 +5,4 @@ use crate::project::Project;
 
 pub const FEE_COLLECTOR_ADDR: Item<Addr> = Item::new("fee_collector_addr");
 pub const PROJECTS: Item<Vec<Project>> = Item::new("projects");
+pub const DONATION_DENOM: Item<String> = Item::new("donation_denom");
