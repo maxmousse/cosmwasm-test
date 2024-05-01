@@ -3,8 +3,10 @@ use error::ContractError;
 use msg::{ExecuteMsg, InstantiateMsg};
 
 mod contract;
+mod donation;
 mod error;
-mod msg;
+pub mod msg;
+mod project;
 mod state;
 
 #[entry_point]
@@ -18,7 +20,7 @@ pub fn instantiate(
 }
 
 #[entry_point]
-pub fn query(deps: Deps, env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: msg::QueryMsg) -> Result<Binary, ContractError> {
     contract::query(deps, env, msg)
 }
 

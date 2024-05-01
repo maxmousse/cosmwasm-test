@@ -1,31 +1,26 @@
-use cosmwasm_std::Addr;
 use serde::{Deserialize, Serialize};
+
+use crate::donation::Donation;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct InstantiateMsg {
-    pub admins: Vec<String>,
     pub donation_denom: String,
+    pub fee_collector_addr: String,
+    pub projects: Vec<(String, String)>, // (name, creator_addr)
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum QueryMsg {
-    Greet {},
-    AdminsList {},
+    GetDonationsByDonator { donator_addr: String },
+    GetDonationsByProject { project_creator_addr: String },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum ExecuteMsg {
-    AddMembers { admins: Vec<String> },
-    Leave {},
-    Donate {},
+    Donate { project_creator_addr: String },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct GreetResp {
-    pub message: String,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct AdminsListResp {
-    pub admins: Vec<Addr>,
+pub struct GetDonationsResponse {
+    pub donations: Vec<Donation>,
 }

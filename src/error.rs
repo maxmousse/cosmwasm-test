@@ -6,8 +6,10 @@ use thiserror::Error;
 pub enum ContractError {
     #[error("{0}")]
     StdError(#[from] StdError),
-    #[error("{sender} is not contract admin")]
-    Unauthorized { sender: Addr },
+
+    #[error("{project} does not exist")]
+    ProjectNotFound { project: Addr },
+
     #[error("Payment error: {0}")]
     Payment(#[from] PaymentError),
 }

@@ -1,41 +1,61 @@
-use crate::{
-    error::ContractError,
-    msg::{ExecuteMsg, GreetResp, InstantiateMsg, QueryMsg},
-    state::{ADMINS, DONATION_DENOM},
+use cosmwasm_std::{
+    coins, to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
 };
-use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
 
-/// Instantiate the contract
+use crate::{
+    donation::Donation,
+    error::ContractError,
+    msg::{ExecuteMsg, GetDonationsResponse, InstantiateMsg, QueryMsg},
+    project::Project,
+    state::{DONATION_DENOM, FEE_COLLECTOR_ADDR, PROJECTS},
+};
+
+/// Contract instantiate entrypoint
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
-    let admins: StdResult<Vec<_>> = msg
-        .admins
+    // Validate the fee_collector_addr
+    let fee_collector_addr = deps.api.addr_validate(&msg.fee_collector_addr)?;
+
+    // Validate the projects addresses
+    // Note: Projects are identified by creator_addr and duplicate are not handled
+    let projects: StdResult<Vec<Project>> = msg
+        .projects
         .into_iter()
-        .map(|addr| deps.api.addr_validate(&addr))
+        .map(|(name, creator_addr)| {
+            let creator_addr = deps.api.addr_validate(&creator_addr)?;
+            Ok(Project::new(name, creator_addr))
+        })
         .collect();
 
-    ADMINS.save(deps.storage, &admins?)?;
+    // Init the contract state
     DONATION_DENOM.save(deps.storage, &msg.donation_denom)?;
+    FEE_COLLECTOR_ADDR.save(deps.storage, &fee_collector_addr)?;
+    PROJECTS.save(deps.storage, &projects?)?;
 
     Ok(Response::new())
 }
 
-/// Handle queries to the contract
-pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
-    use QueryMsg::*;
-
+/// Contract query entrypoint
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> Result<Binary, ContractError> {
     match msg {
-        Greet {} => to_json_binary(&query::greet()?),
-        AdminsList {} => to_json_binary(&query::admin_list(deps)?),
+        QueryMsg::GetDonationsByDonator { donator_addr } => {
+            let response = get_donations_by_donator(deps, &donator_addr)?;
+            Ok(to_json_binary(&response)?)
+        }
+        QueryMsg::GetDonationsByProject {
+            project_creator_addr,
+        } => {
+            let response = get_donations_by_project(deps, &project_creator_addr)?;
+            Ok(to_json_binary(&response)?)
+        }
     }
 }
 
-// Execute a message
-#[allow(dead_code)]
+/// Contract execute entrypoint
 pub fn execute(
     deps: DepsMut,
     _env: Env,
@@ -43,300 +63,106 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::AddMembers { admins } => exec::add_members(deps, info, admins),
-        ExecuteMsg::Leave {} => exec::leave(deps, info).map_err(Into::into),
-        ExecuteMsg::Donate {} => exec::donate(deps, info),
+        ExecuteMsg::Donate {
+            project_creator_addr,
+        } => donate(deps, info, &project_creator_addr),
     }
 }
 
-mod exec {
-    use cosmwasm_std::{coins, BankMsg, DepsMut, MessageInfo, Response, StdResult};
+/// Donate to a project
+fn donate(
+    deps: DepsMut,
+    info: MessageInfo,
+    project_creator_addr: &String,
+) -> Result<Response, ContractError> {
+    // Validate the project_creator_addr
+    let project_creator_addr = deps.api.addr_validate(&project_creator_addr)?;
 
-    use crate::{
-        error::ContractError,
-        state::{ADMINS, DONATION_DENOM},
-    };
+    // Load the contract state
+    let fee_collector_addr = FEE_COLLECTOR_ADDR.load(deps.storage)?;
+    let denom = DONATION_DENOM.load(deps.storage)?;
+    let mut projects = PROJECTS.load(deps.storage)?;
 
-    /// Add new members to the admin list
-    pub fn add_members(
-        deps: DepsMut,
-        info: MessageInfo,
-        admins: Vec<String>,
-    ) -> Result<Response, ContractError> {
-        // Load admins from storage
-        let mut current_admins = ADMINS.load(deps.storage)?;
-
-        // Validate that message sender is an admin
-        if !current_admins.contains(&info.sender) {
-            return Err(ContractError::Unauthorized {
-                sender: info.sender,
-            });
-        }
-
-        // Validate that the new admins are valid addresses
-        let admins: StdResult<Vec<_>> = admins
-            .into_iter()
-            .map(|addr| deps.api.addr_validate(&addr))
-            .collect();
-
-        // Add new admins to previous list
-        current_admins.append(&mut admins?);
-
-        // Save the updated list of admins
-        ADMINS.save(deps.storage, &current_admins)?;
-
-        Ok(Response::new())
-    }
-
-    /// Remove the sender from the admin list
-    pub fn leave(deps: DepsMut, info: MessageInfo) -> StdResult<Response> {
-        ADMINS.update(deps.storage, move |admins| -> StdResult<_> {
-            let admins = admins
-                .into_iter()
-                .filter(|admin| *admin != info.sender)
-                .collect();
-            Ok(admins)
+    // Get project index or return an error
+    let project_index = projects
+        .iter()
+        .position(|project| project.creator_addr == &project_creator_addr)
+        .ok_or(ContractError::ProjectNotFound {
+            project: project_creator_addr.clone(),
         })?;
 
-        Ok(Response::new())
-    }
+    // Get the donation
+    let donator_addr = info.sender.clone();
+    let donation = cw_utils::must_pay(&info, &denom)?.u128();
 
-    pub fn donate(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-        let denom = DONATION_DENOM.load(deps.storage)?;
-        let admins = ADMINS.load(deps.storage)?;
+    // Calculate donation/fees
+    let fee = if donation < 10000 {
+        donation as f64 * 0.1
+    } else {
+        donation as f64 * 0.05
+    } as u128;
+    let donation = donation - fee;
 
-        let donation = cw_utils::must_pay(&info, &denom)?.u128();
+    // Update project in contract state
+    projects[project_index]
+        .donations
+        .push(Donation::new(donator_addr, donation));
+    PROJECTS.save(deps.storage, &projects)?;
 
-        let donation_per_admin = donation / (admins.len() as u128);
+    // Transfer the donation to the project creator
+    let donation_msg = BankMsg::Send {
+        to_address: project_creator_addr.to_string(),
+        amount: coins(donation, denom.clone()),
+    };
 
-        let messages = admins.into_iter().map(|admin| BankMsg::Send {
-            to_address: admin.to_string(),
-            amount: coins(donation_per_admin, &denom),
-        });
+    // Transfer the fees to the fee collector
+    let fee_msg = BankMsg::Send {
+        to_address: fee_collector_addr.to_string(),
+        amount: coins(fee, denom),
+    };
 
-        let resp = Response::new()
-            .add_messages(messages)
-            .add_attribute("action", "donate")
-            .add_attribute("amount", donation.to_string())
-            .add_attribute("per_admin", donation_per_admin.to_string());
+    let resp = Response::new()
+        .add_message(donation_msg)
+        .add_message(fee_msg);
 
-        Ok(resp)
-    }
+    Ok(resp)
 }
 
-mod query {
-    use crate::msg::AdminsListResp;
+fn get_donations_by_donator(
+    deps: Deps,
+    donator_addr: &String,
+) -> Result<GetDonationsResponse, ContractError> {
+    // Validate the donator_addr
+    let donator_addr = deps.api.addr_validate(&donator_addr)?;
 
-    use super::*;
+    // Get the contract state
+    let projects = PROJECTS.load(deps.storage)?;
 
-    /// Return a greeting message
-    pub fn greet() -> StdResult<GreetResp> {
-        let resp = GreetResp {
-            message: "Hello World".to_owned(),
-        };
+    let donations = projects
+        .iter()
+        .flat_map(|project| project.donations.iter())
+        .filter(|donation| &donation.donator_addr == donator_addr)
+        .cloned()
+        .collect();
 
-        Ok(resp)
-    }
-
-    /// Return the list of admins of the contract
-    pub fn admin_list(deps: Deps) -> StdResult<AdminsListResp> {
-        let admins = ADMINS.load(deps.storage)?;
-        let resp = AdminsListResp { admins };
-        Ok(resp)
-    }
+    Ok(GetDonationsResponse { donations })
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::msg::{AdminsListResp, GreetResp, InstantiateMsg, QueryMsg};
-    use cosmwasm_std::{coins, Addr};
-    use cw_multi_test::{App, ContractWrapper, Executor};
+fn get_donations_by_project(
+    deps: Deps,
+    project_creator_addr: &String,
+) -> Result<GetDonationsResponse, ContractError> {
+    // Validate the project_creator_addr
+    let project_creator_addr = deps.api.addr_validate(&project_creator_addr)?;
 
-    use super::*;
+    // Get the contract state
+    let projects = PROJECTS.load(deps.storage)?;
 
-    #[test]
-    fn instantiation() {
-        let mut app = App::default();
+    let donations = projects
+        .iter()
+        .find(|project| &project.creator_addr == project_creator_addr)
+        .map(|project| project.donations.clone())
+        .unwrap_or_default();
 
-        let code = ContractWrapper::new(execute, instantiate, query);
-        let code_id = app.store_code(Box::new(code));
-
-        // TODO: something goes wrong when instantiating the contract with admins
-        // Maybe related to this: 
-        let addr = app
-            .instantiate_contract(
-                code_id,
-                Addr::unchecked("owner"),
-                &InstantiateMsg {
-                    admins: vec!["admin1".to_owned()],
-                    donation_denom: "eth".to_owned(),
-                },
-                &[],
-                "Contract",
-                None,
-            )
-            .unwrap();
-
-        let resp: AdminsListResp = app
-            .wrap()
-            .query_wasm_smart(addr, &QueryMsg::AdminsList {})
-            .unwrap();
-
-        assert_eq!(
-            resp,
-            AdminsListResp {
-                admins: vec![Addr::unchecked("admin1")],
-            }
-        );
-    }
-
-    #[test]
-    fn greet_query() {
-        // Instantiate a mock app
-        // It represents the blockchain state
-        let mut app = App::default();
-
-        // Create the contract and store it on the app
-        let code = ContractWrapper::new(execute, instantiate, query);
-        let code_id = app.store_code(Box::new(code));
-
-        // Instantiate the contract
-        let addr = app
-            .instantiate_contract(
-                code_id,
-                Addr::unchecked("owner"),
-                &InstantiateMsg {
-                    admins: vec![],
-                    donation_denom: "eth".to_owned(),
-                },
-                &[],
-                "Contract",
-                None,
-            )
-            .unwrap();
-
-        // Query the contract
-        let resp: GreetResp = app
-            .wrap()
-            .query_wasm_smart(addr, &QueryMsg::Greet {})
-            .unwrap();
-
-        assert_eq!(
-            resp,
-            GreetResp {
-                message: "Hello World".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn unauthorized() {
-        let mut app = App::default();
-
-        let code = ContractWrapper::new(execute, instantiate, query);
-        let code_id = app.store_code(Box::new(code));
-
-        let addr = app
-            .instantiate_contract(
-                code_id,
-                Addr::unchecked("owner"),
-                &InstantiateMsg {
-                    admins: vec![],
-                    donation_denom: "eth".to_owned(),
-                },
-                &[],
-                "Contract",
-                None,
-            )
-            .unwrap();
-
-        let err = app
-            .execute_contract(
-                Addr::unchecked("user"),
-                addr,
-                &ExecuteMsg::AddMembers {
-                    admins: vec!["user".to_owned()],
-                },
-                &[],
-            )
-            .unwrap_err();
-
-        assert_eq!(
-            ContractError::Unauthorized {
-                sender: Addr::unchecked("user")
-            },
-            err.downcast().unwrap()
-        );
-    }
-
-    #[test]
-    fn donations() {
-        let mut app = App::new(|router, _, storage| {
-            router
-                .bank
-                .init_balance(storage, &Addr::unchecked("user"), coins(5, "eth"))
-                .unwrap()
-        });
-
-        let code = ContractWrapper::new(execute, instantiate, query);
-        let code_id = app.store_code(Box::new(code));
-
-        let addr = app
-            .instantiate_contract(
-                code_id,
-                Addr::unchecked("owner"),
-                &InstantiateMsg {
-                    admins: vec!["admin1".to_owned(), "admin2".to_owned()],
-                    donation_denom: "eth".to_owned(),
-                },
-                &[],
-                "Contract",
-                None,
-            )
-            .unwrap();
-
-        app.execute_contract(
-            Addr::unchecked("user"),
-            addr.clone(),
-            &ExecuteMsg::Donate {},
-            &coins(5, "eth"),
-        )
-        .unwrap();
-
-        assert_eq!(
-            app.wrap()
-                .query_balance("user", "eth")
-                .unwrap()
-                .amount
-                .u128(),
-            0
-        );
-
-        assert_eq!(
-            app.wrap()
-                .query_balance(&addr, "eth")
-                .unwrap()
-                .amount
-                .u128(),
-            1
-        );
-
-        assert_eq!(
-            app.wrap()
-                .query_balance("admin1", "eth")
-                .unwrap()
-                .amount
-                .u128(),
-            2
-        );
-
-        assert_eq!(
-            app.wrap()
-                .query_balance("admin2", "eth")
-                .unwrap()
-                .amount
-                .u128(),
-            2
-        );
-    }
+    Ok(GetDonationsResponse { donations })
 }
