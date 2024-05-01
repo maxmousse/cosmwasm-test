@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::donation::Donation;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct InstantiateMsg {
     pub donation_denom: String,
@@ -8,9 +10,17 @@ pub struct InstantiateMsg {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum QueryMsg {}
+pub enum QueryMsg {
+    GetDonationsByDonator { donator_addr: String },
+    GetDonationsByProject { project_creator_addr: String },
+}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum ExecuteMsg {
     Donate { project_creator_addr: String },
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct GetDonationsResponse {
+    pub donations: Vec<Donation>,
 }

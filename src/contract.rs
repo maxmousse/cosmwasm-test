@@ -1,13 +1,16 @@
-use cosmwasm_std::{coins, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    coins, to_json_binary, BankMsg, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
+};
 
 use crate::{
     donation::Donation,
     error::ContractError,
-    msg::{ExecuteMsg, InstantiateMsg, QueryMsg},
+    msg::{ExecuteMsg, GetDonationsResponse, InstantiateMsg, QueryMsg},
     project::Project,
     state::{DONATION_DENOM, FEE_COLLECTOR_ADDR, PROJECTS},
 };
 
+/// Contract instantiate entrypoint
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
@@ -36,10 +39,23 @@ pub fn instantiate(
     Ok(Response::new())
 }
 
-pub fn query(_deps: Deps, _env: Env, _msg: QueryMsg) -> StdResult<Binary> {
-    unimplemented!();
+/// Contract query entrypoint
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> Result<Binary, ContractError> {
+    match msg {
+        QueryMsg::GetDonationsByDonator { donator_addr } => {
+            let response = get_donations_by_donator(deps, &donator_addr)?;
+            Ok(to_json_binary(&response)?)
+        }
+        QueryMsg::GetDonationsByProject {
+            project_creator_addr,
+        } => {
+            let response = get_donations_by_project(deps, &project_creator_addr)?;
+            Ok(to_json_binary(&response)?)
+        }
+    }
 }
 
+/// Contract execute entrypoint
 pub fn execute(
     deps: DepsMut,
     _env: Env,
@@ -53,6 +69,7 @@ pub fn execute(
     }
 }
 
+/// Donate to a project
 fn donate(
     deps: DepsMut,
     info: MessageInfo,
@@ -111,10 +128,48 @@ fn donate(
     Ok(resp)
 }
 
+fn get_donations_by_donator(
+    deps: Deps,
+    donator_addr: &String,
+) -> Result<GetDonationsResponse, ContractError> {
+    // Validate the donator_addr
+    let donator_addr = deps.api.addr_validate(&donator_addr)?;
+
+    // Get the contract state
+    let projects = PROJECTS.load(deps.storage)?;
+
+    let donations = projects
+        .iter()
+        .flat_map(|project| project.donations.iter())
+        .filter(|donation| &donation.donator_addr == donator_addr)
+        .cloned()
+        .collect();
+
+    Ok(GetDonationsResponse { donations })
+}
+
+fn get_donations_by_project(
+    deps: Deps,
+    project_creator_addr: &String,
+) -> Result<GetDonationsResponse, ContractError> {
+    // Validate the project_creator_addr
+    let project_creator_addr = deps.api.addr_validate(&project_creator_addr)?;
+
+    // Get the contract state
+    let projects = PROJECTS.load(deps.storage)?;
+
+    let donations = projects
+        .iter()
+        .find(|project| &project.creator_addr == project_creator_addr)
+        .map(|project| project.donations.clone())
+        .unwrap_or_default();
+
+    Ok(GetDonationsResponse { donations })
+}
+
 #[cfg(test)]
 mod test {
-    use crate::msg::{InstantiateMsg, QueryMsg};
-    use cosmwasm_std::Addr;
+    use crate::msg::InstantiateMsg;
     use cw_multi_test::{App, ContractWrapper, Executor};
 
     use super::*;
