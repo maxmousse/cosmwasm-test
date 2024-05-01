@@ -5,7 +5,7 @@ use msg::{ExecuteMsg, InstantiateMsg};
 mod contract;
 mod donation;
 mod error;
-mod msg;
+pub mod msg;
 mod project;
 mod state;
 
