@@ -20,10 +20,11 @@ impl Donation {
 #[cfg(test)]
 mod test {
     use super::*;
+    use cw_multi_test::IntoBech32;
 
     #[test]
     fn new() {
-        let donator_addr = Addr::unchecked("addr1");
+        let donator_addr = "addr1".into_bech32();
         let amount = 1000u128;
         let donation = Donation::new(donator_addr.clone(), amount);
 

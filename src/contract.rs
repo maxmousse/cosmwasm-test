@@ -73,10 +73,10 @@ pub fn execute(
 fn donate(
     deps: DepsMut,
     info: MessageInfo,
-    project_creator_addr: &String,
+    project_creator_addr: &str,
 ) -> Result<Response, ContractError> {
     // Validate the project_creator_addr
-    let project_creator_addr = deps.api.addr_validate(&project_creator_addr)?;
+    let project_creator_addr = deps.api.addr_validate(project_creator_addr)?;
 
     // Load the contract state
     let fee_collector_addr = FEE_COLLECTOR_ADDR.load(deps.storage)?;
@@ -86,7 +86,7 @@ fn donate(
     // Get project index or return an error
     let project_index = projects
         .iter()
-        .position(|project| project.creator_addr == &project_creator_addr)
+        .position(|project| project.creator_addr == project_creator_addr)
         .ok_or(ContractError::ProjectNotFound {
             project: project_creator_addr.clone(),
         })?;
@@ -130,10 +130,10 @@ fn donate(
 
 fn get_donations_by_donator(
     deps: Deps,
-    donator_addr: &String,
+    donator_addr: &str,
 ) -> Result<GetDonationsResponse, ContractError> {
     // Validate the donator_addr
-    let donator_addr = deps.api.addr_validate(&donator_addr)?;
+    let donator_addr = deps.api.addr_validate(donator_addr)?;
 
     // Get the contract state
     let projects = PROJECTS.load(deps.storage)?;
@@ -141,7 +141,7 @@ fn get_donations_by_donator(
     let donations = projects
         .iter()
         .flat_map(|project| project.donations.iter())
-        .filter(|donation| &donation.donator_addr == donator_addr)
+        .filter(|donation| donation.donator_addr == donator_addr)
         .cloned()
         .collect();
 
@@ -150,17 +150,17 @@ fn get_donations_by_donator(
 
 fn get_donations_by_project(
     deps: Deps,
-    project_creator_addr: &String,
+    project_creator_addr: &str,
 ) -> Result<GetDonationsResponse, ContractError> {
     // Validate the project_creator_addr
-    let project_creator_addr = deps.api.addr_validate(&project_creator_addr)?;
+    let project_creator_addr = deps.api.addr_validate(project_creator_addr)?;
 
     // Get the contract state
     let projects = PROJECTS.load(deps.storage)?;
 
     let donations = projects
         .iter()
-        .find(|project| &project.creator_addr == project_creator_addr)
+        .find(|project| project.creator_addr == project_creator_addr)
         .map(|project| project.donations.clone())
         .unwrap_or_default();
 
